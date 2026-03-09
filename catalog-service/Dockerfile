@@ -15,4 +15,4 @@ COPY . .
 RUN if [ -d "prisma" ]; then npx prisma generate; fi
 
 # Command to run the service
-CMD ["node", "server.js"]
+CMD ["npx", "nodemon", "server.js"]

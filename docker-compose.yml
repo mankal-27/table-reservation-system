@@ -9,7 +9,7 @@ services:
     container_name: table_reservation_postgres
     environment:
       POSTGRES_USER: admin
-      POSTGRES_PASSWORD: secretpassword
+      POSTGRES_PASSWORD: rootpassword
       POSTGRES_HOST_AUTH_METHOD: trust
     ports:
       - "5433:5432"
@@ -28,7 +28,7 @@ services:
       - app_network
 
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.12.0
+    image: elasticsearch:8.12.0
     container_name: table_reservation_es
     environment:
       - discovery.type=single-node
@@ -44,6 +44,24 @@ services:
   # ==========================================
   # 2. NODE.JS MICROSERVICES
   # ==========================================
+  api-gateway:
+    build: ./api-gateway
+    container_name: api_gateway
+    ports:
+      - "8080:8080"
+    env_file:
+      - ./api-gateway/.env
+    volumes:
+      - ./api-gateway:/usr/src/app
+      - /usr/src/app/node_modules
+    depends_on:
+      - user-service
+      - catalog-service
+      - booking-service
+      - billing-service
+    networks:
+      - app_network
+
   catalog-service:
     build: ./catalog-service
     container_name: catalog_service
@@ -52,6 +70,9 @@ services:
     environment:
       - PORT=3001
       - ELASTICSEARCH_NODE=http://elasticsearch:9200
+    volumes:
+      - ./catalog-service:/usr/src/app
+      - /usr/src/app/node_modules
     depends_on:
       - elasticsearch
     networks:
@@ -63,11 +84,13 @@ services:
     ports:
       - "3002:3002"
     env_file:
-      - ./user-service/.env   # 👈 1. Pulls in your Google Credentials securely
+      - ./user-service/.env
     environment:
       - PORT=3002
-      # 👈 2. We ONLY override the DATABASE_URL here so it connects to the Docker network instead of localhost
-      - DATABASE_URL=postgresql://admin:rootpassword@postgres:5432/user_db?schema=public
+      - DATABASE_URL=postgresql://admin:secretpassword@postgres:5432/user_db?schema=public
+    volumes:
+      - ./user-service:/usr/src/app # 👈 Live tunnel for your code
+      - /usr/src/app/node_modules # 👈 Protects container dependencies
     depends_on:
       - postgres
     networks:
@@ -79,12 +102,15 @@ services:
     ports:
       - "3003:3003"
     env_file:
-      - ./user-service/.env 
+      - ./booking-service/.env
     environment:
       - PORT=3003
       - DATABASE_URL=postgresql://admin:rootpassword@postgres:5432/booking_db?schema=public
       - CATALOG_SERVICE_URL=http://catalog-service:3001
       - RABBITMQ_URL=amqp://rabbitmq:5672
+    volumes:
+      - ./booking-service:/usr/src/app
+      - /usr/src/app/node_modules
     depends_on:
       - postgres
       - rabbitmq
@@ -98,11 +124,14 @@ services:
     ports:
       - "3004:3004"
     env_file:
-      - ./user-service/.env   # 👈 1. Pulls in your Google Credentials securely
+      - ./billing-service/.env
     environment:
       - PORT=3004
       - DATABASE_URL=postgresql://admin:rootpassword@postgres:5432/billing_db?schema=public
       - RABBITMQ_URL=amqp://rabbitmq:5672
+    volumes:
+      - ./billing-service:/usr/src/app
+      - /usr/src/app/node_modules
     depends_on:
       - postgres
       - rabbitmq
@@ -114,6 +143,9 @@ services:
     container_name: notification_service
     environment:
       - RABBITMQ_URL=amqp://rabbitmq:5672
+    volumes:
+      - ./notification-service:/usr/src/app
+      - /usr/src/app/node_modules
     depends_on:
       - rabbitmq
     networks:
@@ -125,6 +157,7 @@ services:
 volumes:
   postgres_data:
   es_data:
+
 
 networks:
   app_network:
