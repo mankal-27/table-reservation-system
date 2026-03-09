@@ -9,6 +9,7 @@ const bookingRoutes = require('./routes/bookingRoutes');
 const { connectRabbitMQ } = require('./config/rabbitmq');
 const swaggerJsDoc = require('swagger-jsdoc');
 const swaggerUi = require('swagger-ui-express');
+const { errorHandler } = require('./utils/errors');
 
 const swaggerOptions = {
   swaggerDefinition: {
@@ -73,6 +74,9 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocs));
 app.get('/health', (req, res) => {
   res.json({ status: 'Booking Service is running', db: 'PostgreSQL' });
 });
+
+// Global error handler (must be after routes)
+app.use(errorHandler);
 
 app.listen(PORT, () => {
   console.log(`📅 Booking Service running on http://localhost:${PORT}`);

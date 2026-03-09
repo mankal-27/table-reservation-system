@@ -9,7 +9,7 @@ services:
     container_name: table_reservation_postgres
     environment:
       POSTGRES_USER: admin
-      POSTGRES_PASSWORD: secretpassword
+      POSTGRES_PASSWORD: rootpassword
       POSTGRES_HOST_AUTH_METHOD: trust
     ports:
       - "5433:5432"
@@ -127,7 +127,7 @@ services:
       - ./billing-service/.env
     environment:
       - PORT=3004
-      - DATABASE_URL=postgresql://admin:secretpassword@postgres:5432/billing_db?schema=public
+      - DATABASE_URL=postgresql://admin:rootpassword@postgres:5432/billing_db?schema=public
       - RABBITMQ_URL=amqp://rabbitmq:5672
     volumes:
       - ./billing-service:/usr/src/app

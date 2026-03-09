@@ -18,33 +18,55 @@ const startConsumer = async () => {
 
       channel.consume(queue, async (msg) => {
         if (msg !== null) {
-          const payload = JSON.parse(msg.content.toString());
+          try {
+            const payload = JSON.parse(msg.content.toString());
 
-          if (payload.event === 'ReservationCreated') {
-            const reservation = payload.data;
-            console.log(`🧾 Received reservation: ${reservation.id}. Calculating bill...`);
+            if (payload.event === 'ReservationCreated') {
+              const reservation = payload.data;
+              console.log(`🧾 [Billing] Received reservation: ${reservation.id}. Calculating bill...`);
 
-            // Calculate total: $10 base fee + sum of menu items
-            let totalAmount = 10.00;
-            if (reservation.menuItems && reservation.menuItems.length > 0) {
-              const menuTotal = reservation.menuItems.reduce((sum, item) => sum + item.price, 0);
-              totalAmount += menuTotal;
-            }
+              // Idempotency guard: do not create duplicate bills for the same reservation
+              const existingBill = await prisma.bill.findUnique({
+                where: { reservationId: reservation.id },
+              });
 
-            // Save the bill to Postgres
-            await prisma.bill.create({
-              data: {
-                reservationId: reservation.id,
-                userId: reservation.userId,
-                totalAmount: totalAmount
+              if (existingBill) {
+                console.log('⚠️ [Billing] Bill already exists for reservation, skipping create', {
+                  reservationId: reservation.id,
+                  billId: existingBill.id,
+                });
+              } else {
+                // Calculate total: $10 base fee + sum of menu items
+                let totalAmount = 10.00;
+                if (reservation.menuItems && reservation.menuItems.length > 0) {
+                  const menuTotal = reservation.menuItems.reduce((sum, item) => sum + item.price, 0);
+                  totalAmount += menuTotal;
+                }
+
+                // Save the bill to Postgres
+                const createdBill = await prisma.bill.create({
+                  data: {
+                    reservationId: reservation.id,
+                    userId: reservation.userId,
+                    totalAmount: totalAmount
+                  }
+                });
+
+                console.log(`✅ [Billing] Bill created for reservation ${reservation.id}. Total: $${totalAmount}`, {
+                  billId: createdBill.id,
+                });
               }
+            }
+          } catch (err) {
+            console.error('💥 [Billing Consumer] Failed to process message', {
+              error: err.message,
+              stack: err.stack,
+              rawMessage: msg.content.toString(),
             });
-
-            console.log(`✅ Bill created for reservation ${reservation.id}. Total: $${totalAmount}`);
+          } finally {
+            // Acknowledge the message so RabbitMQ removes it from the queue
+            channel.ack(msg);
           }
-
-          // Acknowledge the message so RabbitMQ removes it from the queue
-          channel.ack(msg);
         }
       });
       return; // Success! Exit the loop.
