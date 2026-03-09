@@ -4,17 +4,38 @@ const client = require('../config/elasticClient');
 
 const INDEX_NAME = 'restaurants';
 
-// GET /api/restaurants - Browse all restaurants or search by name
+/**
+ * @swagger
+ * /api/restaurants:
+ *   get:
+ *     summary: Browse all restaurants or search by name
+ *     parameters:
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *         description: Name of the restaurant to search for
+ *     responses:
+ *       200:
+ *         description: A list of restaurants
+ *       500:
+ *         description: Failed to fetch restaurants
+ */
 router.get('/', async (req, res) => {
-    console.log('Received request to fetch restaurants with query:', req.query);
+  console.log('Received request to fetch restaurants with query:', req.query);
   try {
     const { search } = req.query;
-    
+
     let query = { match_all: {} };
-    
+
     if (search) {
       query = {
-        match: { name: search }
+        bool: {
+          should: [
+            { match: { name: { query: search, fuzziness: "AUTO" } } },
+            { wildcard: { name: `*${search.toLowerCase()}*` } }
+          ]
+        }
       };
     }
 
@@ -36,9 +57,19 @@ router.get('/', async (req, res) => {
   }
 });
 
-// POST /api/restaurants/seed - Helper to inject dummy data
+/**
+ * @swagger
+ * /api/restaurants/seed:
+ *   post:
+ *     summary: Seed dummy restaurant data into Elasticsearch
+ *     responses:
+ *       200:
+ *         description: Dummy data seeded successfully
+ *       500:
+ *         description: Failed to seed data
+ */
 router.post('/seed', async (req, res) => {
-    console.log('Received request to seed dummy restaurant data');
+  console.log('Received request to seed dummy restaurant data');
   try {
     const dummyData = [
       {
@@ -61,7 +92,7 @@ router.post('/seed', async (req, res) => {
         document: doc
       });
     }
-    
+
     // Force a refresh so data is searchable immediately
     await client.indices.refresh({ index: INDEX_NAME });
 
