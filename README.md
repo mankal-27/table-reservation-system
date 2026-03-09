@@ -54,6 +54,8 @@ The system is decoupled into five distinct, specialized services:
 * **Event-Driven Architecture (EDA):** Heavy computational tasks (billing calculation, email dispatching) are offloaded to background workers via RabbitMQ. This ensures the user facing APIs remain lightning fast and guarantees zero message loss if a downstream service temporarily fails.
 * **Polyglot Persistence:** Data storage is optimized for the specific use case. Relational transactions use PostgreSQL, while high-speed restaurant discovery uses Elasticsearch.
 * **Strict Data Isolation:** Services do not share databases. Cross-domain data fetching is handled strictly through RESTful APIs or AMQP messages, eliminating tightly coupled database constraints.
+* **Idempotent Workflows:** Reservation events are processed at-least-once, but the Billing Service guarantees **one bill per reservation** and **one successful payment per bill**, so duplicate events or retries never overcharge a user.
+* **Centralized Error Handling:** Booking, Billing, and User services share a structured `AppError` + global error middleware, returning consistent JSON errors (with `code` fields) and rich server-side logs for easier debugging in production.
 
 ---
 
@@ -63,10 +65,15 @@ The entire infrastructure and application suite is fully containerized.
 
 ### Prerequisites
 * Docker & Docker Compose installed on your machine.
-* A `.env` file at the root of the project with your Google OAuth credentials:
+* A `.env` file at the root of the project with your Google OAuth credentials and shared config:
   ```env
   GOOGLE_CLIENT_ID=your_client_id
   GOOGLE_CLIENT_SECRET=your_client_secret
+  SESSION_SECRET=some-long-random-string
+  RABBITMQ_URL=amqp://rabbitmq:5672
+  # Example Postgres URL (each service swaps the db name internally)
+  DATABASE_URL=postgresql://postgres:postgres@postgres:5432/user_db?schema=public
+  ```
 
 ### Bootstrapping the Environment
 1. Clone the repository and navigate to the root directory.
@@ -90,8 +97,13 @@ The entire infrastructure and application suite is fully containerized.
 2. Book a Table:
    * POST http://localhost:3003/api/bookings
    * Provide the JSON payload with a valid Restaurant ID.
-3. Pay the Bill:
-   * Retrieve the generated Bill ID from billing_db.
+3. Fetch the Bill for that Reservation:
+   * After booking, note the `reservation.id` from the Booking Service response.
+   * GET http://localhost:3004/api/billing/{RESERVATION_ID}
+   * This returns the bill JSON, including its internal `id` and `status`.
+4. Pay the Bill (idempotent, one-time payment):
+   * Make sure you are authenticated via the User Service (Google OAuth) in the same browser/session.
    * POST http://localhost:3004/api/billing/{BILL_ID}/pay
-4. Check Notifications:
+   * Repeating this request for the same `BILL_ID` will safely return a `400` error with code `BILL_ALREADY_PAID` instead of double-charging.
+5. Check Notifications:
    * View the Docker logs for the notification_service to click the generated Ethereal email receipt link.
