@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
 const axios = require('axios');
+const { getChannel } = require('../config/rabbitmq');
 
 const prisma = new PrismaClient();
 const CATALOG_URL = process.env.CATALOG_SERVICE_URL || 'http://localhost:3001';
@@ -40,6 +41,18 @@ router.post('/', async (req, res) => {
       }
     });
 
+    // 4. ASYNCHRONOUS EVENT PUBLISHING (New!)
+    const channel = getChannel();
+    if (channel) {
+      const eventPayload = {
+        event: 'ReservationCreated',
+        data: reservation
+      };
+      // RabbitMQ requires messages to be sent as Buffer objects
+      channel.sendToQueue('booking_events', Buffer.from(JSON.stringify(eventPayload)));
+      console.log(`📤 Event published to queue for reservation: ${reservation.id}`);
+    }
+    
     res.status(201).json({ 
       message: '✅ Reservation created successfully! (Pending Billing)', 
       reservation 
