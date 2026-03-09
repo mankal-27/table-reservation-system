@@ -8,6 +8,7 @@ services:
       POSTGRES_USER: admin
       POSTGRES_PASSWORD: rootpassword
       # We will use Prisma later to create the logical user_db, booking_db, billing_db
+      POSTGRES_HOST_AUTH_METHOD: trust
     ports:
       - "5433:5432"
     volumes:
