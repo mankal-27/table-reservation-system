@@ -1,0 +1,131 @@
+version: '3.8'
+
+services:
+  # ==========================================
+  # 1. INFRASTRUCTURE (Databases & Brokers)
+  # ==========================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: table_reservation_postgres
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: secretpassword
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - app_network
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: table_reservation_rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    networks:
+      - app_network
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.12.0
+    container_name: table_reservation_es
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    networks:
+      - app_network
+
+  # ==========================================
+  # 2. NODE.JS MICROSERVICES
+  # ==========================================
+  catalog-service:
+    build: ./catalog-service
+    container_name: catalog_service
+    ports:
+      - "3001:3001"
+    environment:
+      - PORT=3001
+      - ELASTICSEARCH_NODE=http://elasticsearch:9200
+    depends_on:
+      - elasticsearch
+    networks:
+      - app_network
+
+  user-service:
+    build: ./user-service
+    container_name: user_service
+    ports:
+      - "3002:3002"
+    env_file:
+      - ./user-service/.env   # 👈 1. Pulls in your Google Credentials securely
+    environment:
+      - PORT=3002
+      # 👈 2. We ONLY override the DATABASE_URL here so it connects to the Docker network instead of localhost
+      - DATABASE_URL=postgresql://admin:rootpassword@postgres:5432/user_db?schema=public
+    depends_on:
+      - postgres
+    networks:
+      - app_network
+
+  booking-service:
+    build: ./booking-service
+    container_name: booking_service
+    ports:
+      - "3003:3003"
+    env_file:
+      - ./user-service/.env 
+    environment:
+      - PORT=3003
+      - DATABASE_URL=postgresql://admin:rootpassword@postgres:5432/booking_db?schema=public
+      - CATALOG_SERVICE_URL=http://catalog-service:3001
+      - RABBITMQ_URL=amqp://rabbitmq:5672
+    depends_on:
+      - postgres
+      - rabbitmq
+      - catalog-service
+    networks:
+      - app_network
+
+  billing-service:
+    build: ./billing-service
+    container_name: billing_service
+    ports:
+      - "3004:3004"
+    env_file:
+      - ./user-service/.env   # 👈 1. Pulls in your Google Credentials securely
+    environment:
+      - PORT=3004
+      - DATABASE_URL=postgresql://admin:rootpassword@postgres:5432/billing_db?schema=public
+      - RABBITMQ_URL=amqp://rabbitmq:5672
+    depends_on:
+      - postgres
+      - rabbitmq
+    networks:
+      - app_network
+
+  notification-service:
+    build: ./notification-service
+    container_name: notification_service
+    environment:
+      - RABBITMQ_URL=amqp://rabbitmq:5672
+    depends_on:
+      - rabbitmq
+    networks:
+      - app_network
+
+# ==========================================
+# 3. VOLUMES & NETWORKS
+# ==========================================
+volumes:
+  postgres_data:
+  es_data:
+
+networks:
+  app_network:
+    driver: bridge
