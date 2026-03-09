@@ -1,0 +1,21 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Reservation {
+  id             String   @id @default(uuid())
+  userId         String   // ID from the User Service
+  restaurantId   String   // ID from the Catalog Service (Elasticsearch)
+  restaurantName String   
+  tableType      String   // e.g., "Window" or "Booth"
+  menuItems      Json?    // Optional menu selection stored as JSON
+  bookingDate    DateTime
+  status         String   @default("PENDING") // Will update to CONFIRMED after billing
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
