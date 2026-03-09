@@ -22,7 +22,8 @@ const INDEX_NAME = 'restaurants';
  *         description: Failed to fetch restaurants
  */
 router.get('/', async (req, res) => {
-  console.log('Received request to fetch restaurants with query:', req.query);
+  console.log(
+    'Received request to fetch restaurants with query:',JSON.stringify(req.query || {}, null, 2));
   try {
     const { search } = req.query;
 

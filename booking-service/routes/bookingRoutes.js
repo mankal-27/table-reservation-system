@@ -3,6 +3,7 @@ const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
 const axios = require('axios');
 const { getChannel } = require('../config/rabbitmq');
+const { AppError } = require('../utils/errors');
 
 const prisma = new PrismaClient();
 const CATALOG_URL = process.env.CATALOG_SERVICE_URL || 'http://localhost:3001';
@@ -40,19 +41,11 @@ const CATALOG_URL = process.env.CATALOG_SERVICE_URL || 'http://localhost:3001';
  *       500:
  *         description: Failed to create reservation
  */
-router.post('/', async (req, res) => {
-  console.log("================ BOOKING DEBUG ================");
-  console.log("Headers:", req.headers.cookie);
-  console.log("Session ID:", req.sessionID);
-  console.log("Session Data:", req.session);
-  console.log("User Object:", req.user);
-  console.log("Is Authenticated?", req.isAuthenticated());
-  console.log("===============================================");
-
+router.post('/', async (req, res, next) => {
   try {
     // SECURITY FIX: Take userId from the session, not the body!
     if (!req.isAuthenticated()) {
-      return res.status(401).json({ error: '❌ You must be logged in to book a table.' });
+      return next(new AppError('❌ You must be logged in to book a table.', 401, 'AUTH_REQUIRED'));
     }
     const userId = req.user.id;
     const { restaurantId, tableType, menuItems, bookingDate } = req.body;
@@ -65,13 +58,17 @@ router.post('/', async (req, res) => {
     const restaurant = restaurants.find(r => r.id === restaurantId);
 
     if (!restaurant) {
-      return res.status(404).json({ error: '❌ Restaurant not found in Catalog.' });
+      return next(new AppError('❌ Restaurant not found in Catalog.', 404, 'RESTAURANT_NOT_FOUND'));
     }
 
     // 2. VALIDATION: Check if the requested table type actually exists there
     const tableInfo = restaurant.tables.find(t => t.type === tableType);
     if (!tableInfo) {
-      return res.status(400).json({ error: `❌ Table type '${tableType}' is not available at ${restaurant.name}.` });
+      return next(new AppError(
+        `❌ Table type '${tableType}' is not available at ${restaurant.name}.`,
+        400,
+        'TABLE_TYPE_UNAVAILABLE'
+      ));
     }
 
     // 3. DATABASE SAVE: If validation passes, save to booking_db
@@ -95,8 +92,17 @@ router.post('/', async (req, res) => {
       };
       // RabbitMQ requires messages to be sent as Buffer objects
       channel.sendToQueue('booking_events', Buffer.from(JSON.stringify(eventPayload)));
-      console.log(`📤 Event published to queue for reservation: ${reservation.id}`);
+      console.log(`📤 [Booking] Event published to queue for reservation`, {
+        reservationId: reservation.id,
+        userId: reservation.userId,
+      });
     }
+
+    console.log('✅ [Booking] Reservation created successfully', {
+      reservationId: reservation.id,
+      userId: reservation.userId,
+      restaurantId: reservation.restaurantId,
+    });
 
     res.status(201).json({
       message: '✅ Reservation created successfully! (Pending Billing)',
@@ -104,37 +110,47 @@ router.post('/', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Booking API Error:', error.message);
-    res.status(500).json({ error: 'Failed to create reservation' });
+    console.error('💥 [Booking] Reservation create failed', {
+      message: error.message,
+      stack: error.stack,
+    });
+    next(error);
   }
 });
 
 /**
  * @swagger
- * /api/bookings/user/{userId}:
+ * /api/bookings/user/me:
  *   get:
- *     summary: Get all reservations for a specific user
- *     parameters:
- *       - in: path
- *         name: userId
- *         required: true
- *         schema:
- *           type: string
+ *     summary: Get all reservations for the currently authenticated user
  *     responses:
  *       200:
  *         description: List of reservations
+ *       401:
+ *         description: Not authenticated
  *       500:
  *         description: Failed to fetch bookings
  */
-router.get('/user/:userId', async (req, res) => {
+router.get('/user/me', async (req, res, next) => {
+  if (!req.isAuthenticated()) {
+    return next(new AppError('❌ You must be logged in to view your bookings.', 401, 'AUTH_REQUIRED'));
+  }
+
   try {
+    const userId = req.user.id;
     const bookings = await prisma.reservation.findMany({
-      where: { userId: req.params.userId },
+      where: { userId },
       orderBy: { bookingDate: 'desc' }
     });
+
+    console.log('📄 [Booking] Fetched bookings for user', {
+      userId,
+      bookingCount: bookings.length,
+    });
+
     res.json(bookings);
   } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch bookings' });
+    next(error);
   }
 });
 

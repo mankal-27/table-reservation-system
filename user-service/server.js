@@ -6,6 +6,7 @@ const cors = require('cors');
 const swaggerJsDoc = require('swagger-jsdoc');
 const swaggerUi = require('swagger-ui-express');
 require('dotenv').config();
+const { errorHandler } = require('./utils/errors');
 
 const swaggerOptions = {
   swaggerDefinition: {
@@ -87,6 +88,9 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocs));
 app.get('/health', (req, res) => {
   res.json({ status: 'User Service is running', db: 'PostgreSQL' });
 });
+
+// Global error handler (must be after routes)
+app.use(errorHandler);
 
 app.listen(PORT, () => {
   console.log(`👤 User Service running on http://localhost:${PORT}`);

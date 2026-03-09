@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
 const amqp = require('amqplib');
+const { AppError } = require('../utils/errors');
 
 const prisma = new PrismaClient();
 const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://localhost:5672';
@@ -25,16 +26,18 @@ const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://localhost:5672';
  *       500:
  *         description: Failed to fetch bill
  */
-router.get('/:reservationId', async (req, res) => {
+router.get('/:reservationId', async (req, res, next) => {
   try {
     const bill = await prisma.bill.findUnique({
       where: { reservationId: req.params.reservationId }
     });
 
-    if (!bill) return res.status(404).json({ error: 'Bill not found' });
+    if (!bill) {
+      return next(new AppError('Bill not found', 404, 'BILL_NOT_FOUND'));
+    }
     res.json(bill);
   } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch bill' });
+    next(error);
   }
 });
 
@@ -59,25 +62,50 @@ router.get('/:reservationId', async (req, res) => {
  *       500:
  *         description: Payment failed
  */
-router.post('/:id/pay', async (req, res) => {
+router.post('/:reservationId/pay', async (req, res, next) => {
   try {
-    const billId = req.params.id;
+    // The client may send either reservationId OR billId here.
+    const identifier = req.params.reservationId;
 
     // SECURITY FIX: Check authentication and ownership
     if (!req.isAuthenticated()) {
-      return res.status(401).json({ error: '❌ You must be logged in to pay a bill.' });
+      return next(new AppError('❌ You must be logged in to pay a bill.', 401, 'AUTH_REQUIRED'));
     }
 
-    const bill = await prisma.bill.findUnique({ where: { id: billId } });
-    if (!bill) return res.status(404).json({ error: 'Bill not found' });
+    console.log('💳 [Billing] Pay request received', {
+      pathParam: identifier,
+      userId: req.user && req.user.id,
+    });
+
+    // Try to resolve bill by reservationId first (normal flow)
+    let bill = await prisma.bill.findUnique({ where: { reservationId: identifier } });
+
+    // If not found, treat the identifier as a direct billId (backwards compatibility)
+    if (!bill) {
+      bill = await prisma.bill.findUnique({ where: { id: identifier } });
+    }
+
+    if (!bill) {
+      return next(new AppError('Bill not found', 404, 'BILL_NOT_FOUND'));
+    }
+
+    // Prevent duplicate payments
+    if (bill.status === 'PAID') {
+      console.log('⚠️ [Billing] Duplicate pay attempt on already paid bill', {
+        reservationId: bill.reservationId,
+        billId: bill.id,
+        userId: req.user && req.user.id,
+      });
+      return next(new AppError('This bill has already been paid.', 400, 'BILL_ALREADY_PAID'));
+    }
 
     if (bill.userId !== req.user.id) {
-      return res.status(403).json({ error: '❌ You are not authorized to pay this bill.' });
+      return next(new AppError('❌ You are not authorized to pay this bill.', 403, 'BILL_FORBIDDEN'));
     }
 
     // 1. Update the database
     const updatedBill = await prisma.bill.update({
-      where: { id: billId },
+      where: { id: bill.id },
       data: { status: 'PAID' }
     });
     // 2. Publish "BillPaid" event to RabbitMQ
@@ -98,38 +126,50 @@ router.post('/:id/pay', async (req, res) => {
     // Close the connection gracefully
     setTimeout(() => { connection.close(); }, 500);
 
+    console.log('✅ [Billing] Bill paid successfully', {
+      reservationId: updatedBill.reservationId,
+      billId: updatedBill.id,
+      userId: updatedBill.userId,
+      status: updatedBill.status,
+    });
+
     res.json({ message: '💸 Bill paid successfully!', bill: updatedBill });
   } catch (error) {
-    res.status(500).json({ error: 'Payment failed' });
+    next(error);
   }
 });
 
 /**
  * @swagger
- * /api/billing/user/{userId}:
+ * /api/billing/user/me:
  *   get:
- *     summary: Get all bills for a specific user
- *     parameters:
- *       - in: path
- *         name: userId
- *         required: true
- *         schema:
- *           type: string
+ *     summary: Get all bills for the currently authenticated user
  *     responses:
  *       200:
  *         description: List of bills
+ *       401:
+ *         description: Not authenticated
  *       500:
  *         description: Failed to fetch bills
  */
-router.get('/user/:userId', async (req, res) => {
+router.get('/user/me', async (req, res, next) => {
+  if (!req.isAuthenticated()) {
+    return next(new AppError('❌ You must be logged in to view your bills.', 401, 'AUTH_REQUIRED'));
+  }
+
   try {
+    const userId = req.user.id;
     const bills = await prisma.bill.findMany({
-      where: { userId: req.params.userId },
+      where: { userId },
       orderBy: { createdAt: 'desc' }
+    });
+    console.log('📄 [Billing] Fetched bills for user', {
+      userId,
+      billCount: bills.length,
     });
     res.json(bills);
   } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch bills' });
+    next(error);
   }
 });
 
