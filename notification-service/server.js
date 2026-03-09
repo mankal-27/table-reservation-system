@@ -1,7 +1,7 @@
 const amqp = require('amqplib');
 const nodemailer = require('nodemailer');
 
-const RABBITMQ_URL = 'amqp://localhost:5672';
+const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://localhost:5672';
 
 const startNotificationService = async () => {
   try {
